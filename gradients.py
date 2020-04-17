@@ -16,12 +16,19 @@ import time
 
 class Agent:
 
-  def __init__(self, action_space, state_space, learning_rate = 0.5):
+  def __init__(
+      self,
+      action_space,
+      state_space,
+      learning_rate = 0.5,
+      epsilon = 0.05):
+
     kb.clear_session()  # maybe not needed
 
-    self.action_space = action_space
-    self.state_space  = state_space
+    self.action_space  = action_space
+    self.state_space   = state_space
     self.learning_rate = learning_rate
+    self.epsilon       = epsilon
 
     self.policy = Sequential()
     self.policy.add(Dense(150,
@@ -42,7 +49,9 @@ class Agent:
     # self.optimizer = Adam(lr = 0.1)
 
   def act(self, state):
-    # TODO epsilon-greedy
+    if np.random.rand() <= self.epsilon:
+      return np.random.randint(self.action_space)
+
     acts = self.policy.predict(state)
     return np.argmax(acts[0])
 
@@ -84,57 +93,73 @@ class Agent:
     )
 
 
-def worker_main(id, gradient_queue, exit_queue):
+def worker_main(id, gradient_queue, exit_queue, sync_connection):
 
   env = gym.make('LunarLander-v2')
   print("Agent %d made environment" % id)
   # env.seed(0)
 
   T = 0  # TODO global, shared between all processes
-  T_max = 1
-  t_max = 1
+  T_max = 3000 * 4
+  t_max = 100  # TODO Should we sync only between episodes, or more often?
   gamma = 0.9
 
   agent = Agent(
       env.action_space.n,
-      env.observation_space.shape[0]
+      env.observation_space.shape[0],
+      epsilon = id / 20
   )
   print("Agent %d made agent" % id)
 
+  terminated = True
   t = 1
   while T <= T_max:
+
+    # Request weights from global agent. 1 is a dummy
+    sync_connection.send(1)
+    print("Agent %d requested global weights" % id)
+
     # Reset local gradients
     policy_gradients = \
         [tf.zeros_like(tw) for tw in agent.policy.trainable_weights]
     value_gradients  = \
         [tf.zeros_like(tw) for tw in agent.value.trainable_weights]
 
-    # TODO synchronise local and global parameters
-
-    t_start = t
-    state = env.reset()
-    state = np.reshape(state, (1, 8))  # TODO set correct input shape to agent networks
+    # Synchronise local and global parameters
+    weights_pair = sync_connection.recv()
+    agent.value.set_weights(weights_pair[0])
+    agent.policy.set_weights(weights_pair[1])
+    print("Agent %d received and updated weights" % id)
 
     state_buffer  = []
     action_buffer = []
     reward_buffer = []
-    done = False
-    while (not done) and (t - t_start < t_max):
-      # print("\nT = %d, environment step %d" % (T, t - t_start))
+    score = 0
 
-      # env.render()
+    t_start = t
+    if terminated:
+      state = env.reset()
+      state = np.reshape(state, (1, 8))  # TODO set correct input shape to agent networks
+      terminated = False
+
+    while (not terminated) and (t - t_start < t_max):
+
+      if id == 0:
+        env.render(mode = 'close')
       action = agent.act(state)
-      next_state, reward, done, _ = env.step(action)
+      next_state, reward, terminated, _ = env.step(action)
 
       state_buffer.append(state)
       action_buffer.append(action)
       reward_buffer.append(reward)
+      score = score + reward
       
       state = np.reshape(next_state, (1, 8))
       t = t + 1
       T = T + 1
 
-    cum_reward = 0 if done else agent.value(tf.convert_to_tensor(state))
+    print("Agent %d got score %f" % (id, score))
+    cum_reward = 0 if terminated else agent.value(tf.convert_to_tensor(state))
     for i in reversed(range(t - t_start)):
       cum_reward = reward_buffer[i] + gamma * cum_reward
 
@@ -162,7 +187,7 @@ def worker_main(id, gradient_queue, exit_queue):
   print("Process %d quit" % id)
 
 
-def global_main(num_agents, gradient_queue, exit_queue):
+def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
 
   env = gym.make('LunarLander-v2')
   print("Globl agent made environment")
@@ -183,6 +208,15 @@ def global_main(num_agents, gradient_queue, exit_queue):
   has_exited = [False for _ in range(num_agents)]
   while not all(has_exited):
 
+    for i in range(num_agents):
+      if sync_connections[i].poll():
+        _ = sync_connections[i].recv()
+
+        value_weights  = global_agent.value.get_weights()
+        policy_weights = global_agent.policy.get_weights()
+        sync_connections[i].send((value_weights, policy_weights))
+        print("global agent sent weights to agent %d" % i)
+
     # Queue.empty() is unreliable according to docs, may cause bugs
     while not gradient_queue.empty():
       grads = gradient_queue.get()
@@ -201,14 +235,17 @@ def global_main(num_agents, gradient_queue, exit_queue):
 
 def main():
 
-  num_agents = 2
+  num_agents = 4
   
-  gradient_queue = mp.Queue()
-  exit_queue     = mp.Queue()
+  gradient_queue =  mp.Queue()
+  exit_queue     =  mp.Queue()
+  sync_pipes     = [mp.Pipe() for _ in range(num_agents)]
+  connections_0  = [c[0] for c in sync_pipes]
+  connections_1  = [c[1] for c in sync_pipes]
 
   global_process = mp.Process(
       target = global_main,
-      args   = (num_agents, gradient_queue, exit_queue)
+      args   = (num_agents, gradient_queue, exit_queue, connections_0)
   )
   global_process.start()
   print("Started global process")
@@ -217,16 +254,12 @@ def main():
   for id in range(num_agents):
     proc = mp.Process(
         target = worker_main,
-        args   = (id, gradient_queue, exit_queue)
+        args   = (id, gradient_queue, exit_queue, connections_1[id])
     )
     processes.append(proc)
     proc.start()
     print("Started process %d" % id)
 
-  # grads = gradient_queue.get(block = True)
-  # print("Main process took gradients from queue, received:")
-  # print(grads)
-  
   for id in range(num_agents):
     processes[id].join()
     print("Joined process %d" % id)
