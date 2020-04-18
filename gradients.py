@@ -144,13 +144,13 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
     state_buffer  = []
     action_buffer = []
     reward_buffer = []
-    score = 0
 
     t_start = t
     if terminated:
-      env.seed(0)  # DEBUG TEMP
+      # env.seed(0)  # DEBUG TEMP
       state = env.reset()
       state = np.reshape(state, (1, 8))  # TODO set correct input shape to agent networks
+      score = 0
       terminated = False
 
     while (not terminated) and (t - t_start < t_max):
@@ -251,7 +251,7 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
 
 def main():
 
-  num_agents = 1
+  num_agents = 4
   
   gradient_queue =  mp.Queue()
   exit_queue     =  mp.Queue()
