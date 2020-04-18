@@ -7,7 +7,7 @@ from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Dense, Input
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.activations import relu, linear
+from tensorflow.keras.activations import relu, linear, softmax
 import tensorflow.keras.backend as kb  # not used?
 import numpy as np
 import multiprocessing as mp
@@ -20,8 +20,10 @@ class Agent:
       self,
       action_space,
       state_space,
-      learning_rate = 0.5,
-      epsilon = 0.05):
+      learning_rate = 0.001,
+      epsilon       = 0.5,
+      epsilon_min   = 0.01,
+      epsilon_decay = 0.996):
 
     kb.clear_session()  # maybe not needed
 
@@ -29,6 +31,8 @@ class Agent:
     self.state_space   = state_space
     self.learning_rate = learning_rate
     self.epsilon       = epsilon
+    self.epsilon_min   = epsilon_min
+    self.epsilon_decay = epsilon_decay
 
     self.policy = Sequential()
     self.policy.add(Dense(150,
@@ -36,7 +40,7 @@ class Agent:
                           activation = relu)
                    )
     self.policy.add(Dense(120, activation = relu))
-    self.policy.add(Dense(action_space, activation = linear))
+    self.policy.add(Dense(action_space, activation = softmax))
 
     self.value = Sequential()
     self.value.add(Dense(150,
@@ -44,16 +48,20 @@ class Agent:
                          activation = relu)
                   )
     self.value.add(Dense(120, activation = relu))
-    self.value.add(Dense(action_space, activation = linear))
-
-    # self.optimizer = Adam(lr = 0.1)
+    self.value.add(Dense(1, activation = linear))
 
   def act(self, state):
+    
     if np.random.rand() <= self.epsilon:
-      return np.random.randint(self.action_space)
+      action = np.random.randint(self.action_space)
+    else:
+      acts = self.policy.predict(state)
+      action = np.argmax(acts[0])
 
-    acts = self.policy.predict(state)
-    return np.argmax(acts[0])
+    if self.epsilon > self.epsilon_min:
+      self.epsilon = self.epsilon * self.epsilon_decay
+
+    return action
 
   def advantage(self, cum_reward, state):
     return cum_reward - self.value(tf.convert_to_tensor(state))
@@ -101,13 +109,13 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
 
   T = 0  # TODO global, shared between all processes
   T_max = 3000 * 4
-  t_max = 100  # TODO Should we sync only between episodes, or more often?
-  gamma = 0.9
+  t_max = 10  # TODO Should we sync only between episodes, or more often?
+  gamma = 0.99
 
   agent = Agent(
       env.action_space.n,
       env.observation_space.shape[0],
-      epsilon = id / 20
+      epsilon = 1.0
   )
   print("Agent %d made agent" % id)
 
@@ -117,7 +125,8 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
 
     # Request weights from global agent. 1 is a dummy
     sync_connection.send(1)
-    print("Agent %d requested global weights" % id)
+    if __debug__:
+      print("Agent %d requested global weights" % id)
 
     # Reset local gradients
     policy_gradients = \
@@ -129,7 +138,8 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
     weights_pair = sync_connection.recv()
     agent.value.set_weights(weights_pair[0])
     agent.policy.set_weights(weights_pair[1])
-    print("Agent %d received and updated weights" % id)
+    if __debug__:
+      print("Agent %d received and updated weights" % id)
 
     state_buffer  = []
     action_buffer = []
@@ -138,6 +148,7 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
 
     t_start = t
     if terminated:
+      env.seed(0)  # DEBUG TEMP
       state = env.reset()
       state = np.reshape(state, (1, 8))  # TODO set correct input shape to agent networks
       terminated = False
@@ -158,7 +169,9 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
       t = t + 1
       T = T + 1
 
-    print("Agent %d got score %f" % (id, score))
+    if terminated:
+      print("Agent %d got score %f" % (id, score))
+      print("Agent %d epsilon is %f" % (id, agent.epsilon))
     cum_reward = 0 if terminated else agent.value(tf.convert_to_tensor(state))
     for i in reversed(range(t - t_start)):
       cum_reward = reward_buffer[i] + gamma * cum_reward
@@ -181,10 +194,11 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
       )
 
     gradient_queue.put((value_gradients, policy_gradients))
-    print("Process %d put gradients in queue" % id)
+    if __debug__:
+      print("Agent %d put gradients in queue" % id)
 
   exit_queue.put(id)
-  print("Process %d quit" % id)
+  print("Agent %d quit" % id)
 
 
 def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
@@ -215,14 +229,16 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
         value_weights  = global_agent.value.get_weights()
         policy_weights = global_agent.policy.get_weights()
         sync_connections[i].send((value_weights, policy_weights))
-        print("global agent sent weights to agent %d" % i)
+        if __debug__:
+          print("global agent sent weights to agent %d" % i)
 
     # Queue.empty() is unreliable according to docs, may cause bugs
     while not gradient_queue.empty():
       grads = gradient_queue.get()
       global_agent.apply_value_gradients(grads[0])
       global_agent.apply_policy_gradients(grads[1])
-      print("Global agent applied gradients")
+      if __debug__:
+        print("Global agent applied gradients")
 
     while not exit_queue.empty():
       exited_id = exit_queue.get()
@@ -235,7 +251,7 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
 
 def main():
 
-  num_agents = 4
+  num_agents = 1
   
   gradient_queue =  mp.Queue()
   exit_queue     =  mp.Queue()
