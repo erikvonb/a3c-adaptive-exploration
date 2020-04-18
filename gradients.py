@@ -14,47 +14,60 @@ import multiprocessing as mp
 import time
 
 
+ENVIRONMENT = 'LunarLander-v2'
+# ENVIRONMENT = 'CartPole-v1'
+
 class Agent:
 
   def __init__(
       self,
-      action_space,
-      state_space,
-      learning_rate = 0.001,
+      num_actions,
+      num_states,
+      learning_rate = 0.01,
       epsilon       = 0.5,
       epsilon_min   = 0.01,
       epsilon_decay = 0.996):
 
     kb.clear_session()  # maybe not needed
 
-    self.action_space  = action_space
-    self.state_space   = state_space
+    self.num_actions   = num_actions
+    self.num_states    = num_states
     self.learning_rate = learning_rate
     self.epsilon       = epsilon
     self.epsilon_min   = epsilon_min
     self.epsilon_decay = epsilon_decay
 
     self.policy = Sequential()
-    self.policy.add(Dense(150,
-                          input_dim  = state_space,
+    self.policy.add(Dense(200,
+                          input_dim  = num_states,
                           activation = relu)
                    )
-    self.policy.add(Dense(120, activation = relu))
-    self.policy.add(Dense(action_space, activation = softmax))
+    self.policy.add(Dense(100, activation = relu))
+    self.policy.add(Dense(num_actions, activation = softmax))
 
     self.value = Sequential()
-    self.value.add(Dense(150,
-                         input_dim  = state_space,
+    self.value.add(Dense(200,
+                         input_dim  = num_states,
                          activation = relu)
                   )
-    self.value.add(Dense(120, activation = relu))
+    self.value.add(Dense(100, activation = relu))
     self.value.add(Dense(1, activation = linear))
+
+    ins    = Input(shape = (num_states,))
+    l1     = Dense(300,          activation = relu   )(ins)
+    l2     = Dense(200,          activation = relu   )(l1)
+    value  = Dense(1,            activation = linear )(l2)
+    policy = Dense(num_actions, activation = softmax)(l2)
+    
+    self.combined_model = Model(inputs = ins, outputs = [value, policy])
 
   def act(self, state):
     
     if np.random.rand() <= self.epsilon:
-      action = np.random.randint(self.action_space)
+      action = np.random.randint(self.num_actions)
     else:
+      # acts = self.combined_model.predict(state)
+      # action = np.argmax(acts[1][0])
       acts = self.policy.predict(state)
       action = np.argmax(acts[0])
 
@@ -73,7 +86,7 @@ class Agent:
       advantage = self.advantage(cum_reward, state)
       acts = self.policy(tf.convert_to_tensor(state))
       policy = acts[0, action]
-      loss = tf.math.log(policy) * tf.stop_gradient(advantage)
+      loss = - tf.math.log(policy) * tf.stop_gradient(advantage)
 
       return tape.gradient(loss, self.policy.trainable_weights)
 
@@ -85,6 +98,19 @@ class Agent:
       loss = tf.math.pow(advantage, 2)
 
       return tape.gradient(loss, self.value.trainable_weights)
+
+  def combined_gradients(self, state, action, cum_reward):
+    with tf.GradientTape() as tape:
+      tape.watch(self.combined_model.trainable_weights)
+
+      advantage = self.advantage(cum_reward, state)
+      acts = self.policy(tf.convert_to_tensor(state))
+      policy = acts[0, action]
+      p_loss = - tf.math.log(policy) * tf.stop_gradient(advantage)
+      v_loss =   tf.math.pow(advantage, 2)
+
+      return 0.5 * p_loss + 0.5 * v_loss
+
 
   # Should only be used on the global agent.
   # .assign_sub() subtracts the gradient (dws) from the weights (ws)
@@ -100,16 +126,24 @@ class Agent:
         zip(self.value.trainable_weights, gradients)
     )
 
+  def apply_combined_gradients(self, gradients):
+    map(
+        lambda ws_dws: ws_dws[0].assign_sub(self.learning_rate * ws_dws[1]),
+        zip(self.combined_model.trainable_weights, gradients)
+    )
+
 
 def worker_main(id, gradient_queue, exit_queue, sync_connection):
 
-  env = gym.make('LunarLander-v2')
+  env = gym.make(ENVIRONMENT)
+  env._max_episode_steps = 2000
   print("Agent %d made environment" % id)
   # env.seed(0)
 
   T = 0  # TODO global, shared between all processes
-  T_max = 3000 * 4
+  T_max = 1e5
   t_max = 10  # TODO Should we sync only between episodes, or more often?
+  max_episode_length = 2000
   gamma = 0.99
 
   agent = Agent(
@@ -125,21 +159,21 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
 
     # Request weights from global agent. 1 is a dummy
     sync_connection.send(1)
-    if __debug__:
-      print("Agent %d requested global weights" % id)
 
     # Reset local gradients
     policy_gradients = \
         [tf.zeros_like(tw) for tw in agent.policy.trainable_weights]
     value_gradients  = \
         [tf.zeros_like(tw) for tw in agent.value.trainable_weights]
+    # combined_gradients = \
+        # [tf.zeros_like(tw) for tw in agent.combined_model.trainable_weights]
 
     # Synchronise local and global parameters
     weights_pair = sync_connection.recv()
     agent.value.set_weights(weights_pair[0])
     agent.policy.set_weights(weights_pair[1])
-    if __debug__:
-      print("Agent %d received and updated weights" % id)
+    # weights = sync_connection.recv()
+    # agent.combined_model.set_weights(weights)
 
     state_buffer  = []
     action_buffer = []
@@ -160,6 +194,9 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
       action = agent.act(state)
       next_state, reward, terminated, _ = env.step(action)
 
+      if __debug__ and id == 0:
+        print(agent.policy.predict(state))
+
       state_buffer.append(state)
       action_buffer.append(action)
       reward_buffer.append(reward)
@@ -171,7 +208,8 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
 
     if terminated:
       print("Agent %d got score %f" % (id, score))
-      print("Agent %d epsilon is %f" % (id, agent.epsilon))
+      if __debug__:
+        print("Agent %d epsilon is %f" % (id, agent.epsilon))
     cum_reward = 0 if terminated else agent.value(tf.convert_to_tensor(state))
     for i in reversed(range(t - t_start)):
       cum_reward = reward_buffer[i] + gamma * cum_reward
@@ -192,10 +230,17 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
               cum_reward
           )
       )
+      # combined_gradients = add_gradients(
+          # combined_gradients,
+          # agent.combined_gradients(
+              # state_buffer[i],
+              # action_buffer[i],
+              # cum_reward
+          # )
+      # )
 
     gradient_queue.put((value_gradients, policy_gradients))
-    if __debug__:
-      print("Agent %d put gradients in queue" % id)
+    # gradient_queue.put(combined_gradients)
 
   exit_queue.put(id)
   print("Agent %d quit" % id)
@@ -203,9 +248,10 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
 
 def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
 
-  env = gym.make('LunarLander-v2')
+  env = gym.make(ENVIRONMENT)
   print("Globl agent made environment")
   # env.seed(0)
+
 
   T = 0  # TODO global, shared between all processes
   T_max = 1
@@ -218,6 +264,11 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
   )
   print("Global agent made agent")
 
+  print("\n=======================================")
+  print("   environment action space.n = ", env.action_space.n)
+  print("   environment observation space.shape = ", env.observation_space.shape)
+  print("=======================================\n")
+
   # Array keeping track of which local agents have finished all work
   has_exited = [False for _ in range(num_agents)]
   while not all(has_exited):
@@ -229,16 +280,15 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
         value_weights  = global_agent.value.get_weights()
         policy_weights = global_agent.policy.get_weights()
         sync_connections[i].send((value_weights, policy_weights))
-        if __debug__:
-          print("global agent sent weights to agent %d" % i)
+        # weights = global_agent.combined_model.get_weights()
+        # sync_connections[i].send(weights)
 
     # Queue.empty() is unreliable according to docs, may cause bugs
     while not gradient_queue.empty():
       grads = gradient_queue.get()
       global_agent.apply_value_gradients(grads[0])
       global_agent.apply_policy_gradients(grads[1])
-      if __debug__:
-        print("Global agent applied gradients")
+      # global_agent.apply_combined_gradients(grads)
 
     while not exit_queue.empty():
       exited_id = exit_queue.get()
