@@ -12,10 +12,13 @@ import tensorflow.keras.backend as kb  # not used?
 import numpy as np
 import multiprocessing as mp
 import time
+import os
 
+tf.keras.backend.set_floatx('float64')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-ENVIRONMENT = 'LunarLander-v2'
-# ENVIRONMENT = 'CartPole-v1'
+# ENVIRONMENT = 'LunarLander-v2'
+ENVIRONMENT = 'CartPole-v1'
 
 class Agent:
 
@@ -23,7 +26,7 @@ class Agent:
       self,
       num_actions,
       num_states,
-      learning_rate = 0.01,
+      learning_rate = 5e-4,
       epsilon       = 0.5,
       epsilon_min   = 0.01,
       epsilon_decay = 0.996):
@@ -36,6 +39,7 @@ class Agent:
     self.epsilon       = epsilon
     self.epsilon_min   = epsilon_min
     self.epsilon_decay = epsilon_decay
+    self.optimizer     = Adam()
 
     self.policy = Sequential()
     self.policy.add(Dense(200,
@@ -57,7 +61,7 @@ class Agent:
     l1     = Dense(300,          activation = relu   )(ins)
     l2     = Dense(200,          activation = relu   )(l1)
     value  = Dense(1,            activation = linear )(l2)
-    policy = Dense(num_actions, activation = softmax)(l2)
+    policy = Dense(num_actions,  activation = softmax)(l2)
     
     self.combined_model = Model(inputs = ins, outputs = [value, policy])
 
@@ -115,21 +119,14 @@ class Agent:
   # Should only be used on the global agent.
   # .assign_sub() subtracts the gradient (dws) from the weights (ws)
   def apply_policy_gradients(self, gradients):
-    map(
-        lambda ws_dws: ws_dws[0].assign_sub(self.learning_rate * ws_dws[1]),
-        zip(self.policy.trainable_weights, gradients)
-    )
+    self.optimizer.apply_gradients(zip(gradients, self.policy.trainable_weights))
 
   def apply_value_gradients(self, gradients):
-    map(
-        lambda ws_dws: ws_dws[0].assign_sub(self.learning_rate * ws_dws[1]),
-        zip(self.value.trainable_weights, gradients)
-    )
+    self.optimizer.apply_gradients(zip(gradients, self.value.trainable_weights))
 
   def apply_combined_gradients(self, gradients):
-    map(
-        lambda ws_dws: ws_dws[0].assign_sub(self.learning_rate * ws_dws[1]),
-        zip(self.combined_model.trainable_weights, gradients)
+    self.optimizer.apply_gradients(
+        zip(gradients, self.combined_model.trainable_weights)
     )
 
 
@@ -139,16 +136,17 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
   env._max_episode_steps = 2000
   print("Agent %d made environment" % id)
   # env.seed(0)
+  num_states = env.observation_space.shape[0]
 
   T = 0  # TODO global, shared between all processes
   T_max = 1e5
-  t_max = 10  # TODO Should we sync only between episodes, or more often?
+  t_max = 20
   max_episode_length = 2000
   gamma = 0.99
 
   agent = Agent(
       env.action_space.n,
-      env.observation_space.shape[0],
+      num_states,
       epsilon = 1.0
   )
   print("Agent %d made agent" % id)
@@ -183,7 +181,7 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
     if terminated:
       # env.seed(0)  # DEBUG TEMP
       state = env.reset()
-      state = np.reshape(state, (1, 8))  # TODO set correct input shape to agent networks
+      state = np.reshape(state, (1, num_states))  # TODO set correct input shape to agent networks
       score = 0
       terminated = False
 
@@ -193,6 +191,9 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
         env.render(mode = 'close')
       action = agent.act(state)
       next_state, reward, terminated, _ = env.step(action)
+      # ATTEMPT AT FIX for cartpole only(?)
+      if terminated:
+        reward = -1
 
       if __debug__ and id == 0:
         print(agent.policy.predict(state))
@@ -202,7 +203,7 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
       reward_buffer.append(reward)
       score = score + reward
       
-      state = np.reshape(next_state, (1, 8))
+      state = np.reshape(next_state, (1, num_states))
       t = t + 1
       T = T + 1
 
@@ -256,7 +257,7 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
   T = 0  # TODO global, shared between all processes
   T_max = 1
   t_max = 1
-  gamma = 0.9
+  gamma = 0.99
 
   global_agent = Agent(
       env.action_space.n,
