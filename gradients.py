@@ -26,7 +26,7 @@ class Agent:
       self,
       num_actions,
       num_states,
-      learning_rate = 5e-4,
+      learning_rate = 0.001,
       epsilon       = 0.5,
       epsilon_min   = 0.05,
       epsilon_decay = 0.9):
@@ -35,27 +35,11 @@ class Agent:
 
     self.num_actions   = num_actions
     self.num_states    = num_states
-    # self.learning_rate = learning_rate
     self.epsilon       = epsilon
     self.epsilon_min   = epsilon_min
     self.epsilon_decay = epsilon_decay
     self.optimizer     = Adam(learning_rate = learning_rate)
 
-    # self.policy = Sequential()
-    # self.policy.add(Dense(200,
-                          # input_dim  = num_states,
-                          # activation = relu)
-                   # )
-    # self.policy.add(Dense(100, activation = relu))
-    # self.policy.add(Dense(num_actions, activation = softmax))
-
-    # self.value = Sequential()
-    # self.value.add(Dense(200,
-                         # input_dim  = num_states,
-                         # activation = relu)
-                  # )
-    # self.value.add(Dense(100, activation = relu))
-    # self.value.add(Dense(1, activation = linear))
 
     ins    = Input(shape = (num_states,))
     l1     = Dense(100,          activation = relu   )(ins)
@@ -66,6 +50,7 @@ class Agent:
     
     self.combined_model = Model(inputs = ins, outputs = [value, policy])
 
+  # not used?
   def act(self, state):
     
     # if np.random.rand() <= self.epsilon:
@@ -76,9 +61,6 @@ class Agent:
       policy = tf.nn.softmax(policy)
       # action = np.argmax(acts[1][0])
       action = np.random.choice(self.num_actions, p = policy.numpy()[0])
-
-      # acts = self.policy.predict(state)
-      # action = np.argmax(acts[0])
 
     if self.epsilon > self.epsilon_min:
       self.epsilon = self.epsilon * self.epsilon_decay
@@ -113,11 +95,6 @@ class Agent:
     with tf.GradientTape() as tape:
       tape.watch(self.combined_model.trainable_weights)
 
-      # advantage = self.advantage(cum_reward, state)
-      # acts = self.combined_model(tf.convert_to_tensor(state))[1]
-      # policy = acts[0, action]
-      # p_loss = - tf.math.log(policy) * tf.stop_gradient(advantage)
-      # v_loss =   tf.math.pow(advantage, 2)
       predictions = self.combined_model(tf.convert_to_tensor(state, dtype = tf.float64))
       value       = predictions[0]
       policy      = predictions[1]
@@ -137,16 +114,11 @@ class Agent:
       )
       p_loss = p_loss * tf.stop_gradient(advantage)
 
-      return 0.5 * p_loss + 0.5 * v_loss
-
+      loss = 0.5 * p_loss + 0.5 * v_loss
+    grad = tape.gradient(loss, self.combined_model.trainable_weights)
+    return grad
 
   # Should only be used on the global agent.
-  # def apply_policy_gradients(self, gradients):
-    # self.optimizer.apply_gradients(zip(gradients, self.policy.trainable_weights))
-
-  # def apply_value_gradients(self, gradients):
-    # self.optimizer.apply_gradients(zip(gradients, self.value.trainable_weights))
-
   def apply_combined_gradients(self, gradients):
     self.optimizer.apply_gradients(
         zip(gradients, self.combined_model.trainable_weights)
@@ -162,7 +134,7 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
   num_states = env.observation_space.shape[0]
 
   T = 0  # TODO global, shared between all processes
-  T_max = 1e5
+  T_max = 200  # max number of episodes
   t_max = 20
   max_episode_length = 2000
   gamma = 0.99
@@ -174,100 +146,101 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
   )
   print("Agent %d made agent" % id)
 
-  terminated = True
-  t = 1
+  # Reset local gradients
+  combined_gradients = \
+      [tf.zeros_like(tw) for tw in agent.combined_model.trainable_weights]
+
   while T <= T_max:
+    T = T + 1
 
-    # Request weights from global agent. 1 is a dummy
-    sync_connection.send(1)
-
-    # Reset local gradients
-    # policy_gradients = \
-        # [tf.zeros_like(tw) for tw in agent.policy.trainable_weights]
-    # value_gradients  = \
-        # [tf.zeros_like(tw) for tw in agent.value.trainable_weights]
-    combined_gradients = \
-        [tf.zeros_like(tw) for tw in agent.combined_model.trainable_weights]
-
-    # Synchronise local and global parameters
-    # weights_pair = sync_connection.recv()
-    # agent.value.set_weights(weights_pair[0])
-    # agent.policy.set_weights(weights_pair[1])
-    weights = sync_connection.recv()
-    old_weights = agent.combined_model.get_weights()
-    agent.combined_model.set_weights(weights)
+    state = env.reset()
+    state = np.reshape(state, (1, num_states))
+    if __debug__ and id == 0:
+      print("AGENT 0 STARTED NEW EPISODE, T=%d" % (T,))
 
     state_buffer  = []
     action_buffer = []
     reward_buffer = []
+    score = 0
 
-    t_start = t
-    if terminated:
-      # env.seed(0)  # DEBUG TEMP
-      state = env.reset()
-      state = np.reshape(state, (1, num_states))  # TODO set correct input shape to agent networks
-      score = 0
-      terminated = False
+    t = 0  # local time step counter
+    terminated = False
 
-    while (not terminated) and (t - t_start < t_max):
+    while not terminated:
+      if __debug__ and id == 0:
+        print("AGENT 0 TAKING STEP IN ENVIRONMENT, t=%d" % (t,))
+
+      predictions = agent.combined_model(tf.convert_to_tensor(state))
+      value       = predictions[0]
+      logits      = predictions[1]
+      probs       = tf.nn.softmax(logits)
 
       if id == 0:
         env.render(mode = 'close')
-      action = agent.act(state)
+
+      action = np.random.choice(agent.num_actions, p = probs.numpy()[0])
+      # if __debug__ and id == 0:
+        # print("Probabilities", probs.numpy(), "action", action)
+
       next_state, reward, terminated, _ = env.step(action)
-      # ATTEMPT AT FIX for cartpole only(?)
       if terminated:
         reward = -1
-
-      if __debug__ and id == 0:
-        print(agent.policy.predict(state))
 
       state_buffer.append(state)
       action_buffer.append(action)
       reward_buffer.append(reward)
       score = score + reward
-      
-      state = np.reshape(next_state, (1, num_states))
+
       t = t + 1
-      T = T + 1
 
-    if terminated:
-      print("Agent %d got score %f" % (id, score))
-      if __debug__:
-        print("Agent %d epsilon is %f" % (id, agent.epsilon))
-    cum_reward = \
-        0 if terminated \
-          else agent.combined_model(tf.convert_to_tensor(state))[0]
-    for i in reversed(range(t - t_start)):
-      cum_reward = reward_buffer[i] + gamma * cum_reward
+      if t == t_max or terminated:
 
-      # Accumulate gradients
-      # policy_gradients = add_gradients(
-          # policy_gradients,
-          # agent.policy_gradients(
-              # state_buffer[i],
-              # action_buffer[i],
-              # cum_reward
-          # )
-      # )
-      # value_gradients = add_gradients(
-          # value_gradients,
-          # agent.value_gradients(
-              # state_buffer[i],
-              # cum_reward
-          # )
-      # )
-      combined_gradients = add_gradients(
-          combined_gradients,
-          agent.combined_gradients(
-              state_buffer[i],
-              action_buffer[i],
-              cum_reward
+        # Compute and send gradients
+        cum_reward = \
+            0 if terminated \
+              else agent.combined_model(tf.convert_to_tensor(state))[0]
+
+        for i in reversed(range(t)):
+          cum_reward = reward_buffer[i] + gamma * cum_reward
+
+          combined_gradients = add_gradients(
+              combined_gradients,
+              agent.combined_gradients(
+                  state_buffer[i],
+                  action_buffer[i],
+                  cum_reward
+              )
           )
-      )
 
-    # gradient_queue.put((value_gradients, policy_gradients))
-    gradient_queue.put(combined_gradients)
+        # Send local gradients to global agent
+        gradient_queue.put(combined_gradients)
+        if __debug__ and id == 0:
+          print("Agent 0 put gradients in queue")
+
+        # Reset local gradients
+        combined_gradients = \
+            [tf.zeros_like(tw) for tw in agent.combined_model.trainable_weights]
+
+        # Request weights from global agent. 1 is a dummy
+        sync_connection.send(1)
+
+        # Synchronise local and global parameters
+        weights = sync_connection.recv()
+        # old_weights = agent.combined_model.get_weights()
+        agent.combined_model.set_weights(weights)
+
+        state_buffer  = []
+        action_buffer = []
+        reward_buffer = []
+
+        if  terminated:
+          print("Agent %d got score %f" % (id, score))
+        
+        # reset update timer
+        t = 0
+
+      state = next_state
+      state = np.reshape(state, (1, num_states))
 
   exit_queue.put(id)
   print("Agent %d quit" % id)
@@ -304,18 +277,15 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
       if sync_connections[i].poll():
         _ = sync_connections[i].recv()
 
-        # value_weights  = global_agent.value.get_weights()
-        # policy_weights = global_agent.policy.get_weights()
-        # sync_connections[i].send((value_weights, policy_weights))
         weights = global_agent.combined_model.get_weights()
         sync_connections[i].send(weights)
 
     # Queue.empty() is unreliable according to docs, may cause bugs
     while not gradient_queue.empty():
       grads = gradient_queue.get()
-      # global_agent.apply_value_gradients(grads[0])
-      # global_agent.apply_policy_gradients(grads[1])
       global_agent.apply_combined_gradients(grads)
+      if __debug__:
+        print("Global agent updated weights")
 
     while not exit_queue.empty():
       exited_id = exit_queue.get()
