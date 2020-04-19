@@ -28,52 +28,57 @@ class Agent:
       num_states,
       learning_rate = 5e-4,
       epsilon       = 0.5,
-      epsilon_min   = 0.01,
-      epsilon_decay = 0.996):
+      epsilon_min   = 0.05,
+      epsilon_decay = 0.9):
 
     kb.clear_session()  # maybe not needed
 
     self.num_actions   = num_actions
     self.num_states    = num_states
-    self.learning_rate = learning_rate
+    # self.learning_rate = learning_rate
     self.epsilon       = epsilon
     self.epsilon_min   = epsilon_min
     self.epsilon_decay = epsilon_decay
-    self.optimizer     = Adam()
+    self.optimizer     = Adam(learning_rate = learning_rate)
 
-    self.policy = Sequential()
-    self.policy.add(Dense(200,
-                          input_dim  = num_states,
-                          activation = relu)
-                   )
-    self.policy.add(Dense(100, activation = relu))
-    self.policy.add(Dense(num_actions, activation = softmax))
+    # self.policy = Sequential()
+    # self.policy.add(Dense(200,
+                          # input_dim  = num_states,
+                          # activation = relu)
+                   # )
+    # self.policy.add(Dense(100, activation = relu))
+    # self.policy.add(Dense(num_actions, activation = softmax))
 
-    self.value = Sequential()
-    self.value.add(Dense(200,
-                         input_dim  = num_states,
-                         activation = relu)
-                  )
-    self.value.add(Dense(100, activation = relu))
-    self.value.add(Dense(1, activation = linear))
+    # self.value = Sequential()
+    # self.value.add(Dense(200,
+                         # input_dim  = num_states,
+                         # activation = relu)
+                  # )
+    # self.value.add(Dense(100, activation = relu))
+    # self.value.add(Dense(1, activation = linear))
 
     ins    = Input(shape = (num_states,))
-    l1     = Dense(300,          activation = relu   )(ins)
-    l2     = Dense(200,          activation = relu   )(l1)
-    value  = Dense(1,            activation = linear )(l2)
-    policy = Dense(num_actions,  activation = softmax)(l2)
+    l1     = Dense(100,          activation = relu   )(ins)
+    l2     = Dense(100,          activation = relu   )(ins)
+    value  = Dense(1,            activation = linear )(l1)
+    # NOTE policy output is unnormalised probabilities; use softmax explicitly
+    policy = Dense(num_actions,  activation = linear)(l2)
     
     self.combined_model = Model(inputs = ins, outputs = [value, policy])
 
   def act(self, state):
     
-    if np.random.rand() <= self.epsilon:
+    # if np.random.rand() <= self.epsilon:
+    if False:
       action = np.random.randint(self.num_actions)
     else:
-      # acts = self.combined_model.predict(state)
+      policy = self.combined_model(tf.convert_to_tensor(state))[1]
+      policy = tf.nn.softmax(policy)
       # action = np.argmax(acts[1][0])
-      acts = self.policy.predict(state)
-      action = np.argmax(acts[0])
+      action = np.random.choice(self.num_actions, p = policy.numpy()[0])
+
+      # acts = self.policy.predict(state)
+      # action = np.argmax(acts[0])
 
     if self.epsilon > self.epsilon_min:
       self.epsilon = self.epsilon * self.epsilon_decay
@@ -81,7 +86,8 @@ class Agent:
     return action
 
   def advantage(self, cum_reward, state):
-    return cum_reward - self.value(tf.convert_to_tensor(state))
+    preds = self.combined_model(tf.convert_to_tensor(state))
+    return cum_reward - preds[0]
 
   def policy_gradients(self, state, action, cum_reward):
     with tf.GradientTape() as tape:
@@ -107,22 +113,39 @@ class Agent:
     with tf.GradientTape() as tape:
       tape.watch(self.combined_model.trainable_weights)
 
-      advantage = self.advantage(cum_reward, state)
-      acts = self.policy(tf.convert_to_tensor(state))
-      policy = acts[0, action]
-      p_loss = - tf.math.log(policy) * tf.stop_gradient(advantage)
-      v_loss =   tf.math.pow(advantage, 2)
+      # advantage = self.advantage(cum_reward, state)
+      # acts = self.combined_model(tf.convert_to_tensor(state))[1]
+      # policy = acts[0, action]
+      # p_loss = - tf.math.log(policy) * tf.stop_gradient(advantage)
+      # v_loss =   tf.math.pow(advantage, 2)
+      predictions = self.combined_model(tf.convert_to_tensor(state, dtype = tf.float64))
+      value       = predictions[0]
+      policy      = predictions[1]
+      probs       = tf.nn.softmax(policy)
+
+      advantage = tf.convert_to_tensor(cum_reward, dtype = tf.float64) - value
+
+      v_loss = tf.math.pow(advantage, 2)
+
+      actions_index = tf.one_hot(
+          tf.convert_to_tensor(action),
+          self.num_actions
+      )
+      p_loss = tf.nn.softmax_cross_entropy_with_logits(
+          labels = actions_index,
+          logits = policy
+      )
+      p_loss = p_loss * tf.stop_gradient(advantage)
 
       return 0.5 * p_loss + 0.5 * v_loss
 
 
   # Should only be used on the global agent.
-  # .assign_sub() subtracts the gradient (dws) from the weights (ws)
-  def apply_policy_gradients(self, gradients):
-    self.optimizer.apply_gradients(zip(gradients, self.policy.trainable_weights))
+  # def apply_policy_gradients(self, gradients):
+    # self.optimizer.apply_gradients(zip(gradients, self.policy.trainable_weights))
 
-  def apply_value_gradients(self, gradients):
-    self.optimizer.apply_gradients(zip(gradients, self.value.trainable_weights))
+  # def apply_value_gradients(self, gradients):
+    # self.optimizer.apply_gradients(zip(gradients, self.value.trainable_weights))
 
   def apply_combined_gradients(self, gradients):
     self.optimizer.apply_gradients(
@@ -147,7 +170,7 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
   agent = Agent(
       env.action_space.n,
       num_states,
-      epsilon = 1.0
+      epsilon = 0.0
   )
   print("Agent %d made agent" % id)
 
@@ -159,19 +182,20 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
     sync_connection.send(1)
 
     # Reset local gradients
-    policy_gradients = \
-        [tf.zeros_like(tw) for tw in agent.policy.trainable_weights]
-    value_gradients  = \
-        [tf.zeros_like(tw) for tw in agent.value.trainable_weights]
-    # combined_gradients = \
-        # [tf.zeros_like(tw) for tw in agent.combined_model.trainable_weights]
+    # policy_gradients = \
+        # [tf.zeros_like(tw) for tw in agent.policy.trainable_weights]
+    # value_gradients  = \
+        # [tf.zeros_like(tw) for tw in agent.value.trainable_weights]
+    combined_gradients = \
+        [tf.zeros_like(tw) for tw in agent.combined_model.trainable_weights]
 
     # Synchronise local and global parameters
-    weights_pair = sync_connection.recv()
-    agent.value.set_weights(weights_pair[0])
-    agent.policy.set_weights(weights_pair[1])
-    # weights = sync_connection.recv()
-    # agent.combined_model.set_weights(weights)
+    # weights_pair = sync_connection.recv()
+    # agent.value.set_weights(weights_pair[0])
+    # agent.policy.set_weights(weights_pair[1])
+    weights = sync_connection.recv()
+    old_weights = agent.combined_model.get_weights()
+    agent.combined_model.set_weights(weights)
 
     state_buffer  = []
     action_buffer = []
@@ -211,37 +235,39 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
       print("Agent %d got score %f" % (id, score))
       if __debug__:
         print("Agent %d epsilon is %f" % (id, agent.epsilon))
-    cum_reward = 0 if terminated else agent.value(tf.convert_to_tensor(state))
+    cum_reward = \
+        0 if terminated \
+          else agent.combined_model(tf.convert_to_tensor(state))[0]
     for i in reversed(range(t - t_start)):
       cum_reward = reward_buffer[i] + gamma * cum_reward
 
       # Accumulate gradients
-      policy_gradients = add_gradients(
-          policy_gradients,
-          agent.policy_gradients(
-              state_buffer[i],
-              action_buffer[i],
-              cum_reward
-          )
-      )
-      value_gradients = add_gradients(
-          value_gradients,
-          agent.value_gradients(
-              state_buffer[i],
-              cum_reward
-          )
-      )
-      # combined_gradients = add_gradients(
-          # combined_gradients,
-          # agent.combined_gradients(
+      # policy_gradients = add_gradients(
+          # policy_gradients,
+          # agent.policy_gradients(
               # state_buffer[i],
               # action_buffer[i],
               # cum_reward
           # )
       # )
+      # value_gradients = add_gradients(
+          # value_gradients,
+          # agent.value_gradients(
+              # state_buffer[i],
+              # cum_reward
+          # )
+      # )
+      combined_gradients = add_gradients(
+          combined_gradients,
+          agent.combined_gradients(
+              state_buffer[i],
+              action_buffer[i],
+              cum_reward
+          )
+      )
 
-    gradient_queue.put((value_gradients, policy_gradients))
-    # gradient_queue.put(combined_gradients)
+    # gradient_queue.put((value_gradients, policy_gradients))
+    gradient_queue.put(combined_gradients)
 
   exit_queue.put(id)
   print("Agent %d quit" % id)
@@ -278,18 +304,18 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
       if sync_connections[i].poll():
         _ = sync_connections[i].recv()
 
-        value_weights  = global_agent.value.get_weights()
-        policy_weights = global_agent.policy.get_weights()
-        sync_connections[i].send((value_weights, policy_weights))
-        # weights = global_agent.combined_model.get_weights()
-        # sync_connections[i].send(weights)
+        # value_weights  = global_agent.value.get_weights()
+        # policy_weights = global_agent.policy.get_weights()
+        # sync_connections[i].send((value_weights, policy_weights))
+        weights = global_agent.combined_model.get_weights()
+        sync_connections[i].send(weights)
 
     # Queue.empty() is unreliable according to docs, may cause bugs
     while not gradient_queue.empty():
       grads = gradient_queue.get()
-      global_agent.apply_value_gradients(grads[0])
-      global_agent.apply_policy_gradients(grads[1])
-      # global_agent.apply_combined_gradients(grads)
+      # global_agent.apply_value_gradients(grads[0])
+      # global_agent.apply_policy_gradients(grads[1])
+      global_agent.apply_combined_gradients(grads)
 
     while not exit_queue.empty():
       exited_id = exit_queue.get()
