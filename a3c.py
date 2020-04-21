@@ -47,8 +47,7 @@ class Agent:
       num_states,
       learning_rate = 0.001):
 
-    # kb.clear_session()  # maybe not needed
-    manual_variable_initialization(True)
+    manual_variable_initialization(True)  # TODO is this needed?
 
     self.num_actions   = num_actions
     self.num_states    = num_states
@@ -83,9 +82,7 @@ class Agent:
       )
 
       # non-sparse takes index vector; sparse takes a single index
-      # p_loss = tf.nn.softmax_cross_entropy_with_logits(
       p_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
-          # labels = actions_index,
           labels = tf.convert_to_tensor([action]),
           logits = policy
       )
@@ -222,10 +219,12 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
           # (may be false due to frequent updating)
           if score > best_episode_score:
             print("Agent %d saving local model with score %.0f" % (id, score))
+            agent.combined_model.save_weights(
+                os.path.join(save_dir, 'tmpa3c')
+            )
             # agent.combined_model.save_weights(
                 # os.path.join(save_dir, 'model_score_%.0f' % score)
             # )
-            agent.combined_model.save_weights('./tmpa3c')
             best_episode_score = score
 
         # Synchronise local and global parameters
@@ -243,54 +242,54 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
       state = next_state
       state = np.reshape(state, (1, num_states))
 
-  if id == 0:
-    time.sleep(10)
-    print("\n\nAgent 0 testing its latest local agent")
-    for _ in range(4):
-      score = 0
-      state = env.reset()
-      state = np.reshape(state, (1, num_states))
-      terminated = False
-      while not terminated:
-        predictions = agent.combined_model(tf.convert_to_tensor(state))
-        logits      = predictions[1]
-        probs       = tf.nn.softmax(logits)
-        env.render(mode = 'close')
-        time.sleep(1/50)
-        if args.stoc:
-          action = np.random.choice(num_actions, p = probs.numpy()[0])
-        else:
-          action = np.argmax(probs.numpy())
-        next_state, reward, terminated, _ = env.step(action)
-        score = score + reward
-        state = next_state
-        state = np.reshape(state, (1, num_states))
-      print("Final test done with score %f" % score)
+  # if id == 0:
+    # time.sleep(10)
+    # print("\n\nAgent 0 testing its latest local agent")
+    # for _ in range(4):
+      # score = 0
+      # state = env.reset()
+      # state = np.reshape(state, (1, num_states))
+      # terminated = False
+      # while not terminated:
+        # predictions = agent.combined_model(tf.convert_to_tensor(state))
+        # logits      = predictions[1]
+        # probs       = tf.nn.softmax(logits)
+        # env.render(mode = 'close')
+        # time.sleep(1/50)
+        # if args.stoc:
+          # action = np.random.choice(num_actions, p = probs.numpy()[0])
+        # else:
+          # action = np.argmax(probs.numpy())
+        # next_state, reward, terminated, _ = env.step(action)
+        # score = score + reward
+        # state = next_state
+        # state = np.reshape(state, (1, num_states))
+      # print("Final test done with score %f" % score)
     
-    agent.combined_model.save_weights('./tmpa3c-0')
-    time.sleep(2)
-    print("\n\nAgent 0 testing again")
-    agent.combined_model.load_weights('./tmpa3c-0')
-    for _ in range(4):
-      score = 0
-      state = env.reset()
-      state = np.reshape(state, (1, num_states))
-      terminated = False
-      while not terminated:
-        predictions = agent.combined_model(tf.convert_to_tensor(state))
-        logits      = predictions[1]
-        probs       = tf.nn.softmax(logits)
-        env.render(mode = 'close')
-        time.sleep(1/50)
-        if args.stoc:
-          action = np.random.choice(num_actions, p = probs.numpy()[0])
-        else:
-          action = np.argmax(probs.numpy())
-        next_state, reward, terminated, _ = env.step(action)
-        score = score + reward
-        state = next_state
-        state = np.reshape(state, (1, num_states))
-      print("Final test done with score %f" % score)
+    # agent.combined_model.save_weights('./tmpa3c-0')
+    # time.sleep(2)
+    # print("\n\nAgent 0 testing again")
+    # agent.combined_model.load_weights('./tmpa3c-0')
+    # for _ in range(4):
+      # score = 0
+      # state = env.reset()
+      # state = np.reshape(state, (1, num_states))
+      # terminated = False
+      # while not terminated:
+        # predictions = agent.combined_model(tf.convert_to_tensor(state))
+        # logits      = predictions[1]
+        # probs       = tf.nn.softmax(logits)
+        # env.render(mode = 'close')
+        # time.sleep(1/50)
+        # if args.stoc:
+          # action = np.random.choice(num_actions, p = probs.numpy()[0])
+        # else:
+          # action = np.argmax(probs.numpy())
+        # next_state, reward, terminated, _ = env.step(action)
+        # score = score + reward
+        # state = next_state
+        # state = np.reshape(state, (1, num_states))
+      # print("Final test done with score %f" % score)
 
   exit_queue.put(id)
   print("Agent %d quit" % id)
@@ -355,28 +354,27 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
   print("Global agent is done")
 
   print("\nSTARTING GLOBAL TEST")
-  # test(None, global_agent)
-  global_agent.combined_model.load_weights('./tmpa3c-0')
-  for _ in range(4):
-    score = 0
-    state = env.reset()
-    state = np.reshape(state, (1, num_states))
-    terminated = False
-    while not terminated:
-      predictions = global_agent.combined_model(tf.convert_to_tensor(state))
-      logits      = predictions[1]
-      probs       = tf.nn.softmax(logits)
-      env.render(mode = 'close')
-      time.sleep(1/50)
-      if args.stoc:
-        action = np.random.choice(num_actions, p = probs.numpy()[0])
-      else:
-        action = np.argmax(probs.numpy())
-      next_state, reward, terminated, _ = env.step(action)
-      score = score + reward
-      state = next_state
-      state = np.reshape(state, (1, num_states))
-    print("Final test done with score %f" % score)
+  # global_agent.combined_model.load_weights('./tmpa3c-0')
+  # for _ in range(4):
+    # score = 0
+    # state = env.reset()
+    # state = np.reshape(state, (1, num_states))
+    # terminated = False
+    # while not terminated:
+      # predictions = global_agent.combined_model(tf.convert_to_tensor(state))
+      # logits      = predictions[1]
+      # probs       = tf.nn.softmax(logits)
+      # env.render(mode = 'close')
+      # time.sleep(1/50)
+      # if args.stoc:
+        # action = np.random.choice(num_actions, p = probs.numpy()[0])
+      # else:
+        # action = np.argmax(probs.numpy())
+      # next_state, reward, terminated, _ = env.step(action)
+      # score = score + reward
+      # state = next_state
+      # state = np.reshape(state, (1, num_states))
+    # print("Final test done with score %f" % score)
 
 def train():
 
@@ -413,60 +411,6 @@ def train():
   print("Joined global process")
 
 
-def test2(file, agent = None, episodes = 100):
-  print("Running single agent with weights from %s" % file)
-
-  env = gym.make(ENVIRONMENT)
-  print("Made environment")
-  env.seed(0)
-  np.random.seed(0)
-
-  num_states = env.observation_space.shape[0]
-  num_actions = env.action_space.n
-
-  if agent is None:
-    agent = Agent(
-        num_actions, 
-        num_states
-    )
-    print("Made agent")
-
-  # agent.combined_model.load_weights(os.path.join(save_dir, file))
-  agent.combined_model.load_weights('./tmpa3c')
-  print("Agent loaded weights from %s", file)
-
-  T = 0
-  while T < episodes:
-    T = T + 1
-
-    state = env.reset()
-    state = np.reshape(state, (1, num_states))
-
-    score = 0
-    terminated = False
-
-    while not terminated:
-
-      predictions = agent.combined_model(tf.convert_to_tensor(state))
-      logits      = predictions[1]
-      probs       = tf.nn.softmax(logits)
-
-      env.render(mode = 'close')
-
-      # if args.stoc:
-      if False:
-        action = np.random.choice(num_actions, p = probs.numpy()[0])
-      else:
-        action = np.argmax(probs.numpy())
-
-      next_state, reward, terminated, _ = env.step(action)
-      score = score + reward
-
-      time.sleep(1/50)
-
-    print("Finished episode %d/%d with score %f" % (T, episodes, score))
-
-
 def test():
   env = gym.make(ENVIRONMENT)
   print("Globl agent made environment")
@@ -478,7 +422,8 @@ def test():
       num_actions,
       num_states
   )
-  global_agent.combined_model.load_weights('./tmpa3c-0')
+  # global_agent.combined_model.load_weights('./tmpa3c-0')
+  global_agent.combined_model.load_weights(os.path.join(save_dir, './tmpa3c'))
   for _ in range(4):
     score = 0
     state = env.reset()
