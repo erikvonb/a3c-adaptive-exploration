@@ -14,6 +14,11 @@ import multiprocessing as mp
 import time
 import os
 import argparse
+import matplotlib.pyplot as plt
+import datetime as dt
+
+
+# TODO useful?
 from tensorflow.keras.backend import manual_variable_initialization
 manual_variable_initialization(True)
 
@@ -27,11 +32,22 @@ ENVIRONMENT = 'CartPole-v1'
 parser = argparse.ArgumentParser()
 parser.add_argument('--test', dest = 'test_model', type = str)
 parser.add_argument('--freq', dest = 'freq', default = 20, type = int)
+parser.add_argument('--avg', dest = 'num_trainings', default = 1, type = int)
 parser.add_argument('--stochastic', dest = 'stoc', action = 'store_true')
+parser.add_argument('--Tmax', dest = 'global_T_max', default = 200, type = int)
 args = parser.parse_args()
 
 # Setup for saving models during training
 save_dir = os.path.join('.', ENVIRONMENT)
+try:
+  os.mkdir(os.path.join(save_dir, 'training_episode_scores'))
+except FileExistsError:
+  print("Directory exists")
+try:
+  os.mkdir(os.path.join(save_dir, 'figures'))
+  print("Made directory %s" % save_dir)
+except FileExistsError:
+  print("Directory %s already exists, skipping creation" % os.path.join(save_dir, 'figures'))
 try:
   os.mkdir(save_dir)
   print("Made directory %s" % save_dir)
@@ -99,15 +115,15 @@ class Agent:
     )
 
 
-def worker_main(id, gradient_queue, exit_queue, sync_connection):
+def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, global_T):
 
   epsilon       = 1.0
   epsilon_min   = 0.01
   epsilon_decay = 0.95
   gamma = 0.99
 
-  T = 0  # TODO global, shared between all processes
-  T_max = 50  # max number of episodes
+  # T = 0  # TODO global, shared between all processes
+  # T_max = 50  # max number of episodes
   t_max = args.freq
   max_episode_length = 2000  # NOTE not used
 
@@ -130,13 +146,15 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
   combined_gradients = \
       [tf.zeros_like(tw) for tw in agent.combined_model.trainable_weights]
 
-  while T < T_max:
-    T = T + 1
+  # while T < T_max:
+    # T = T + 1
+  while global_T.value < args.global_T_max:
+    with global_T.get_lock():
+      global_T.value += 1
+      current_episode = global_T.value
 
     state = env.reset()
     state = np.reshape(state, (1, num_states))
-    if __debug__ and id == 0:
-      print("AGENT 0 STARTED NEW EPISODE, T=%d" % (T,))
 
     state_buffer  = []
     action_buffer = []
@@ -147,8 +165,6 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
     terminated = False
 
     while not terminated:
-      if __debug__ and id == 0:
-        print("AGENT 0 TAKING STEP IN ENVIRONMENT, t=%d" % (t,))
 
       predictions = agent.combined_model(tf.convert_to_tensor(state))
       value       = predictions[0]
@@ -202,8 +218,6 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
         combined_gradients = mult_gradients(combined_gradients, 1 / t)
         # Send local gradients to global agent
         gradient_queue.put(combined_gradients)
-        if __debug__ and id == 0:
-          print("Agent 0 put gradients in queue")
 
         # Reset local gradients
         combined_gradients = \
@@ -213,7 +227,8 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
         sync_connection.send(1)
 
         if  terminated:
-          print("Agent %d, episode %d/%d, got score %f" % (id, T, T_max, score))
+          print("Agent %d, episode %d/%d, got score %f" % (id, current_episode, args.global_T_max, score))
+          scores_queue.put(score)
 
           # Save model if better than previous
           # (may be false due to frequent updating)
@@ -229,79 +244,29 @@ def worker_main(id, gradient_queue, exit_queue, sync_connection):
 
         # Synchronise local and global parameters
         weights = sync_connection.recv()
-        # old_weights = agent.combined_model.get_weights()
         agent.combined_model.set_weights(weights)
 
         state_buffer  = []
         action_buffer = []
         reward_buffer = []
         
-        # reset update timer
+        # Reset update timer
         t = 0
 
       state = next_state
       state = np.reshape(state, (1, num_states))
 
-  # if id == 0:
-    # time.sleep(10)
-    # print("\n\nAgent 0 testing its latest local agent")
-    # for _ in range(4):
-      # score = 0
-      # state = env.reset()
-      # state = np.reshape(state, (1, num_states))
-      # terminated = False
-      # while not terminated:
-        # predictions = agent.combined_model(tf.convert_to_tensor(state))
-        # logits      = predictions[1]
-        # probs       = tf.nn.softmax(logits)
-        # env.render(mode = 'close')
-        # time.sleep(1/50)
-        # if args.stoc:
-          # action = np.random.choice(num_actions, p = probs.numpy()[0])
-        # else:
-          # action = np.argmax(probs.numpy())
-        # next_state, reward, terminated, _ = env.step(action)
-        # score = score + reward
-        # state = next_state
-        # state = np.reshape(state, (1, num_states))
-      # print("Final test done with score %f" % score)
-    
-    # agent.combined_model.save_weights('./tmpa3c-0')
-    # time.sleep(2)
-    # print("\n\nAgent 0 testing again")
-    # agent.combined_model.load_weights('./tmpa3c-0')
-    # for _ in range(4):
-      # score = 0
-      # state = env.reset()
-      # state = np.reshape(state, (1, num_states))
-      # terminated = False
-      # while not terminated:
-        # predictions = agent.combined_model(tf.convert_to_tensor(state))
-        # logits      = predictions[1]
-        # probs       = tf.nn.softmax(logits)
-        # env.render(mode = 'close')
-        # time.sleep(1/50)
-        # if args.stoc:
-          # action = np.random.choice(num_actions, p = probs.numpy()[0])
-        # else:
-          # action = np.argmax(probs.numpy())
-        # next_state, reward, terminated, _ = env.step(action)
-        # score = score + reward
-        # state = next_state
-        # state = np.reshape(state, (1, num_states))
-      # print("Final test done with score %f" % score)
-
   exit_queue.put(id)
   print("Agent %d quit" % id)
 
 
-def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
+def global_main(num_agents, gradient_queue, scores_queue, exit_queue, sync_connections, score_history_conn, global_T):
 
   env = gym.make(ENVIRONMENT)
   print("Globl agent made environment")
   # env.seed(0)
 
-  T = 0  # TODO global, shared between all processes
+  # T = 0  # TODO global, shared between all processes
   gamma = 0.99
   save_freq = 20
   save_counter = 0
@@ -336,14 +301,6 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
       global_agent.apply_combined_gradients(grads)
       save_counter = save_counter + 1
 
-      # if save_counter == save_freq:
-        # save_counter = 0
-        # global_agent.combined_model.save_weights('./tmpa3c')
-        # print("Global agent saved weights")
-
-      if __debug__:
-        print("Global agent updated weights")
-
     while not exit_queue.empty():
       exited_id = exit_queue.get()
       has_exited[exited_id] = True
@@ -351,44 +308,34 @@ def global_main(num_agents, gradient_queue, exit_queue, sync_connections):
 
     time.sleep(0.2)
 
+  scores = []
+  while not scores_queue.empty():
+    local_score = scores_queue.get()
+    scores.append(local_score)
+
+  score_history_conn.send(scores)
   print("Global agent is done")
 
-  print("\nSTARTING GLOBAL TEST")
-  # global_agent.combined_model.load_weights('./tmpa3c-0')
-  # for _ in range(4):
-    # score = 0
-    # state = env.reset()
-    # state = np.reshape(state, (1, num_states))
-    # terminated = False
-    # while not terminated:
-      # predictions = global_agent.combined_model(tf.convert_to_tensor(state))
-      # logits      = predictions[1]
-      # probs       = tf.nn.softmax(logits)
-      # env.render(mode = 'close')
-      # time.sleep(1/50)
-      # if args.stoc:
-        # action = np.random.choice(num_actions, p = probs.numpy()[0])
-      # else:
-        # action = np.argmax(probs.numpy())
-      # next_state, reward, terminated, _ = env.step(action)
-      # score = score + reward
-      # state = next_state
-      # state = np.reshape(state, (1, num_states))
-    # print("Final test done with score %f" % score)
 
 def train():
 
   num_agents = 4
   
+  score_history_pipe = mp.Pipe()
+  score_history_conn = score_history_pipe[0]
+
   gradient_queue =  mp.Queue()
+  scores_queue   =  mp.Queue()
   exit_queue     =  mp.Queue()
   sync_pipes     = [mp.Pipe() for _ in range(num_agents)]
   connections_0  = [c[0] for c in sync_pipes]
   connections_1  = [c[1] for c in sync_pipes]
 
+  global_T = mp.Value('i', 0)
+
   global_process = mp.Process(
       target = global_main,
-      args   = (num_agents, gradient_queue, exit_queue, connections_0)
+      args   = (num_agents, gradient_queue, scores_queue, exit_queue, connections_0, score_history_pipe[1], global_T)
   )
   global_process.start()
   print("Started global process")
@@ -397,7 +344,7 @@ def train():
   for id in range(num_agents):
     proc = mp.Process(
         target = worker_main,
-        args   = (id, gradient_queue, exit_queue, connections_1[id])
+        args   = (id, gradient_queue, scores_queue, exit_queue, connections_1[id], global_T)
     )
     processes.append(proc)
     proc.start()
@@ -407,14 +354,15 @@ def train():
     processes[id].join()
     print("Joined process %d" % id)
 
+  training_score_history = score_history_conn.recv()
   global_process.join()
   print("Joined global process")
 
+  return training_score_history
 
 def test():
   env = gym.make(ENVIRONMENT)
   print("Globl agent made environment")
-  # env.seed(0)
 
   num_actions = env.action_space.n
   num_states  = env.observation_space.shape[0]
@@ -422,7 +370,6 @@ def test():
       num_actions,
       num_states
   )
-  # global_agent.combined_model.load_weights('./tmpa3c-0')
   global_agent.combined_model.load_weights(os.path.join(save_dir, './tmpa3c'))
   for _ in range(4):
     score = 0
@@ -462,8 +409,32 @@ if __name__ == '__main__':
     test()
 
   else:
-    print("Starting training")
-    train()
+    for _ in range(args.num_trainings):
+      print("Starting training")
+      score_history = train()
+
+      moving_avg_scores = []
+      moving_avg_len    = 20
+      for i in range(len(score_history)):
+        l = min(i, moving_avg_len)
+        moving_avg_scores.append( np.mean(score_history[i - l: i + 1]) )
+
+      fname =   dt.datetime.today().strftime("%Y-%m-%d-%X") \
+          + ":training_scores"
+      np.savetxt(os.path.join(save_dir, 'training_episode_scores', fname), score_history)
+
+      plt.figure(figsize = (8, 4))
+      plt.plot(score_history)
+      plt.xlabel("Episode")
+      plt.ylabel("Episode score")
+      plt.savefig(os.path.join(save_dir, 'figures', 'scores.pdf'))
+
+      plt.figure(figsize = (8, 4))
+      plt.plot(moving_avg_scores)
+      plt.xlabel("Episode")
+      plt.ylabel("Moving average episode score (length %d)" % moving_avg_len)
+      plt.savefig(os.path.join(save_dir, 'figures', 'moving_avg_scores.pdf'))
+      print("Saved figures in", os.path.join(save_dir, 'figures'))
 
   print("Done")
 
