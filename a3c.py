@@ -16,7 +16,6 @@ import os
 import argparse
 import matplotlib.pyplot as plt
 import datetime as dt
-import epsilon
 
 
 tf.keras.backend.set_floatx('float64')
@@ -111,18 +110,9 @@ class Agent:
 
 def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, global_T):
 
-  # epsilon_min   = 0.01
-  # epsilon_decay = 0.99
-  # # epsilon_decay = 1.0
-  # epsilon_init = 1.0
-  # eps = epsilon_init
-  # epsilon_decay_time = 5000
-  eps = epsilon.GridEpsilon(
-      n_nodes = (50, 50, 50, 50),
-      lows    = [-4.8, -0.5, -0.42, -0.5],
-      highs   = [ 4.8,  3.0,  0.42,  1.0],
-      init_value = 0.5,
-      decay = 0.995)
+  epsilon_min   = 0.01
+  epsilon_decay = 0.995
+  eps           = 0.5
 
   gamma = 0.99
 
@@ -177,18 +167,12 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
       if args.stoc:
         action = np.random.choice(num_actions, p = probs.numpy()[0])
       else:
-        # if np.random.rand() <= eps:
-          # action = np.random.randint(num_actions)
-        # else:
-          # action = np.argmax(probs.numpy())
-        # if eps > eps_min:
-          # eps = eps * eps_decay
-          # eps = eps - (epsilon_init - epsilon_min) / epsilon_decay_time
-        if eps.take_random_action(state[0]):
+        if np.random.rand() <= eps:
           action = np.random.randint(num_actions)
         else:
           action = np.argmax(probs.numpy())
-        eps.step_update(state[0])
+        if eps > epsilon_min:
+          eps = eps * epsilon_decay
 
       next_state, reward, terminated, _ = env.step(action)
       if terminated:
