@@ -1,6 +1,7 @@
 env/
 plots/
 plot_scores/
-__pychache__/
+__pycache__/
 archived/
+CartPole-v1/
 
