@@ -16,11 +16,7 @@ import os
 import argparse
 import matplotlib.pyplot as plt
 import datetime as dt
-
-
-# TODO useful?
-from tensorflow.keras.backend import manual_variable_initialization
-manual_variable_initialization(True)
+import epsilon
 
 
 tf.keras.backend.set_floatx('float64')
@@ -61,9 +57,7 @@ class Agent:
       self,
       num_actions,
       num_states,
-      learning_rate = 0.001):
-
-    manual_variable_initialization(True)  # TODO is this needed?
+      learning_rate = 0.0025):
 
     self.num_actions   = num_actions
     self.num_states    = num_states
@@ -117,13 +111,21 @@ class Agent:
 
 def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, global_T):
 
-  epsilon       = 1.0
-  epsilon_min   = 0.01
-  epsilon_decay = 0.95
+  # epsilon_min   = 0.01
+  # epsilon_decay = 0.99
+  # # epsilon_decay = 1.0
+  # epsilon_init = 1.0
+  # eps = epsilon_init
+  # epsilon_decay_time = 5000
+  eps = epsilon.GridEpsilon(
+      n_nodes = (50, 50, 50, 50),
+      lows    = [-4.8, -0.5, -0.42, -0.5],
+      highs   = [ 4.8,  3.0,  0.42,  1.0],
+      init_value = 0.5,
+      decay = 0.995)
+
   gamma = 0.99
 
-  # T = 0  # TODO global, shared between all processes
-  # T_max = 50  # max number of episodes
   t_max = args.freq
   max_episode_length = 2000  # NOTE not used
 
@@ -146,8 +148,6 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
   combined_gradients = \
       [tf.zeros_like(tw) for tw in agent.combined_model.trainable_weights]
 
-  # while T < T_max:
-    # T = T + 1
   while global_T.value < args.global_T_max:
     with global_T.get_lock():
       global_T.value += 1
@@ -171,19 +171,24 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
       logits      = predictions[1]
       probs       = tf.nn.softmax(logits)
 
-      if id == 0:
-        env.render(mode = 'close')
+      # if id == 0:
+        # env.render(mode = 'close')
 
       if args.stoc:
         action = np.random.choice(num_actions, p = probs.numpy()[0])
       else:
-        if np.random.rand() <= epsilon:
+        # if np.random.rand() <= eps:
+          # action = np.random.randint(num_actions)
+        # else:
+          # action = np.argmax(probs.numpy())
+        # if eps > eps_min:
+          # eps = eps * eps_decay
+          # eps = eps - (epsilon_init - epsilon_min) / epsilon_decay_time
+        if eps.take_random_action(state[0]):
           action = np.random.randint(num_actions)
         else:
           action = np.argmax(probs.numpy())
-
-        if epsilon > epsilon_min:
-          epsilon = epsilon * epsilon_decay
+        eps.step_update(state[0])
 
       next_state, reward, terminated, _ = env.step(action)
       if terminated:
@@ -414,12 +419,12 @@ if __name__ == '__main__':
       score_history = train()
 
       moving_avg_scores = []
-      moving_avg_len    = 20
+      moving_avg_len    = 50
       for i in range(len(score_history)):
         l = min(i, moving_avg_len)
         moving_avg_scores.append( np.mean(score_history[i - l: i + 1]) )
 
-      fname =   dt.datetime.today().strftime("%Y-%m-%d-%X") \
+      fname = dt.datetime.today().strftime("%Y-%m-%d-%X") \
           + ":training_scores"
       np.savetxt(os.path.join(save_dir, 'training_episode_scores', fname), score_history)
 
