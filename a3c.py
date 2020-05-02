@@ -24,6 +24,10 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # ENVIRONMENT = 'LunarLander-v2'
 ENVIRONMENT = 'CartPole-v1'
 
+EPSILONS       = [0.5  , 0.5  , 0.5  , 0.5]
+EPSILON_DECAYS = [0.995, 0.995, 0.995, 0.995]
+EPSILON_MINS   = [0.01 , 0.01 , 0.01 , 0.01 ]
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--test', dest = 'test_model', type = str)
 parser.add_argument('--freq', dest = 'freq', default = 20, type = int)
@@ -110,9 +114,9 @@ class Agent:
 
 def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, global_T):
 
-  epsilon_min   = 0.01
-  epsilon_decay = 0.995
-  eps           = 0.5
+  epsilon_min   = EPSILON_MINS[id]
+  epsilon_decay = EPSILON_DECAYS[id]
+  eps           = EPSILONS[id]
 
   gamma = 0.99
 

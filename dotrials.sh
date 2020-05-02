@@ -6,7 +6,7 @@ done
 
 mv CartPole-v1/training_episode_scores/* plot_scores/
 python3 plot.py
-mv plot_scores/* results_standard-eps-decay/gam0-99_lr0-0025/trial1
-mv plots/* results_standard-eps-decay/gam0-99_lr0-0025/trial1
+mv plot_scores/* results_standard-eps-decay-hetero/gam0-99_lr0-0025/trial7
+mv plots/* results_standard-eps-decay-hetero/gam0-99_lr0-0025/trial7
 
 
