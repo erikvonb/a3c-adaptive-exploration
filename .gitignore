@@ -5,5 +5,4 @@ __pycache__/
 archived/
 CartPole-v1/
 
-results_standard-eps-decay/
-
+results*
