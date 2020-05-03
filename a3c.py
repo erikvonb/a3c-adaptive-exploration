@@ -152,11 +152,13 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
       eps = 0.5
       exploring_counter -= 1
       if id == 0:
-        print("---- AGENT 0 EXPLORING ----")
+        print("\t\t---- AGENT 0 EXPLORING ----")
     if explore_check_counter == explore_check_freq:
-      exploring_counter = 0
+      if id == 0:
+        print("\t\t---- AGENT 0 CHECKING IF IT SHOULD EXPLORE ----")
+      explore_check_counter = 0
       moving_avg_score = np.mean(moving_avg_buffer)
-      if moving_avg_score - prev_moving_avg_score < 10:
+      if moving_avg_score - prev_moving_avg_score < 0:
         exploring_counter = 5
 
       prev_moving_avg_score = moving_avg_score
