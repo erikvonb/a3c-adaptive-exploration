@@ -111,15 +111,15 @@ class Agent:
 def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, global_T):
 
   epsilon_min   = 0.01
-  epsilon_decay = 0.998
-  eps           = 0.5
+  epsilon_decay = 0.995
+  eps           = 1.0
 
   gamma = 0.99
 
   exploring_counter = 20
   explore_check_freq = 20
   explore_check_counter = 0
-  explore_eps = 0.5
+  explore_eps = 1.0
   explore_eps_decay = 0.7
   
   moving_avg_buffer = np.zeros(5)
