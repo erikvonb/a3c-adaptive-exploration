@@ -96,6 +96,7 @@ class Agent:
           logits = policy
       )
       p_loss = p_loss * tf.stop_gradient(advantage)
+      p_loss = p_loss - 0.01 * tf.reduce_sum(probs * tf.math.log(probs + 1e-20), axis = 1)
 
       loss = 0.5 * p_loss + 0.5 * v_loss
     grad = tape.gradient(loss, self.combined_model.trainable_weights)
@@ -111,8 +112,8 @@ class Agent:
 def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, global_T):
 
   epsilon_min   = 0.01
-  epsilon_decay = 0.995
-  eps           = 0.5
+  epsilon_decay = 0.998
+  eps           = 1.0
 
   gamma = 0.99
 
