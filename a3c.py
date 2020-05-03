@@ -111,10 +111,17 @@ class Agent:
 def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, global_T):
 
   epsilon_min   = 0.01
-  epsilon_decay = 0.995
+  epsilon_decay = 0.998
   eps           = 0.5
 
   gamma = 0.99
+
+  exploring_counter = 10
+  explore_check_freq = 10
+  explore_check_counter = 0
+  
+  moving_avg_buffer = np.zeros(5)
+  moving_avg_ptr    = 0
 
   t_max = args.freq
   max_episode_length = 2000  # NOTE not used
@@ -138,7 +145,31 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
   combined_gradients = \
       [tf.zeros_like(tw) for tw in agent.combined_model.trainable_weights]
 
+  prev_moving_avg_score = 0
+
   while global_T.value < args.global_T_max:
+    if exploring_counter > 0:
+      eps = 0.5
+      exploring_counter -= 1
+      if id == 0:
+        print("---- AGENT 0 EXPLORING ----")
+    if explore_check_counter == explore_check_freq:
+      exploring_counter = 0
+      moving_avg_score = np.mean(moving_avg_buffer)
+      if moving_avg_score - prev_moving_avg_score < 10:
+        exploring_counter = 5
+
+      prev_moving_avg_score = moving_avg_score
+    explore_check_counter += 1
+    # if global_T.value < 20:
+      # eps = 0.5
+    # elif (80 < global_T.value) and (global_T.value < 120):
+      # eps = 0.5
+    # elif (180 < global_T.value) and (global_T.value < 220):
+      # eps = 0.5
+    # elif (280 < global_T.value) and (global_T.value < 320):
+      # eps = 0.5
+
     with global_T.get_lock():
       global_T.value += 1
       current_episode = global_T.value
@@ -218,6 +249,8 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
         if  terminated:
           print("Agent %d, episode %d/%d, got score %f" % (id, current_episode, args.global_T_max, score))
           scores_queue.put(score)
+          moving_avg_buffer[moving_avg_ptr] = score
+          moving_avg_ptr = (moving_avg_ptr + 1) % len(moving_avg_buffer)
 
           # Save model if better than previous
           # (may be false due to frequent updating)
