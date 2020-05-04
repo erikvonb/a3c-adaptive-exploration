@@ -111,7 +111,7 @@ class Agent:
 def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, global_T):
 
   epsilon_min   = 0.01
-  epsilon_decay = 0.995
+  epsilon_decay = 0.99
   eps           = 1.0
 
   gamma = 0.99
@@ -153,12 +153,17 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
 
   while global_T.value < args.global_T_max:
     if exploring_counter > 0:
-      # eps = explore_eps
       # Set epsilon for exploration period
-      eps = min(explore_eps, 15 / (moving_avg_score - lowest_avg_score + 1))
+      current_eps = min(explore_eps, 15 / (moving_avg_score - lowest_avg_score + 1))
       exploring_counter -= 1
       if id == 0:
         print("\t\t---- AGENT 0 EXPLORING WITH EPS=%f----" % eps)
+    else:
+      # Set espilon to the normal decay-epsilon
+      current_eps = eps
+      if eps > epsilon_min:
+        eps = eps * epsilon_decay
+
     if explore_check_counter == explore_check_freq:
       if id == 0:
         print("\t\t---- AGENT 0 CHECKING IF IT SHOULD EXPLORE ----")
@@ -168,7 +173,6 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
 
       if moving_avg_score - prev_moving_avg_score <= 0:
         exploring_counter = 10
-        # explore_eps *= explore_eps_decay
 
       prev_moving_avg_score = moving_avg_score
     explore_check_counter += 1
@@ -201,12 +205,12 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
       if args.stoc:
         action = np.random.choice(num_actions, p = probs.numpy()[0])
       else:
-        if np.random.rand() <= eps:
+        if np.random.rand() <= current_eps:
           action = np.random.randint(num_actions)
         else:
           action = np.argmax(probs.numpy())
-        if eps > epsilon_min:
-          eps = eps * epsilon_decay
+        # if eps > epsilon_min:
+          # eps = eps * epsilon_decay
 
       next_state, reward, terminated, _ = env.step(action)
       if terminated:
