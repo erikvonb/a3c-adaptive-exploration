@@ -120,7 +120,6 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
   explore_check_freq = 20
   explore_check_counter = 0
   explore_eps = 1.0
-  explore_eps_decay = 0.7
   
   moving_avg_buffer = np.zeros(5)
   moving_avg_ptr    = 0
@@ -154,7 +153,10 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
   while global_T.value < args.global_T_max:
     if exploring_counter > 0:
       # Set epsilon for exploration period
-      current_eps = min(explore_eps, 15 / (moving_avg_score - lowest_avg_score + 1))
+      # current_eps = min(explore_eps, 15 / (moving_avg_score - lowest_avg_score + 1))
+      current_eps = max(
+          min(explore_eps, 10 / (abs(moving_avg_score - prev_moving_avg_score) + 1)),
+          0.1)
       exploring_counter -= 1
       if id == 0:
         print("\t\t---- AGENT 0 EXPLORING WITH EPS=%f----" % eps)
