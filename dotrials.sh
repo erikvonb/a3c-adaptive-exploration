@@ -1,7 +1,7 @@
 source ./env/bin/activate
 
-for i in {1..3}; do
-  python3 a3c.py --Tmax 400
+for i in {1..5}; do
+  python3 a3c.py --Tmax 600
 done
 
 mv CartPole-v1/training_episode_scores/* plot_scores/
