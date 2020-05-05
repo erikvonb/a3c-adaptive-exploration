@@ -117,22 +117,24 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
   gamma = 0.99
 
   explore_time = 10
-  exploring_counter = 20
+  exploring_counter = 10
   explore_check_freq = 35
+  # explore_check_freq = 20
   explore_check_counter = 0
   explore_eps = 1.0
   
   moving_avg_buffer = np.zeros(5)
   moving_avg_ptr    = 0
   moving_avg_score  = 0
+  prev_moving_avg_score = 0
+  delta = 0
 
   t_max = args.freq
-  max_episode_length = 2000  # NOTE not used
 
   best_episode_score = 0
 
   env = gym.make(ENVIRONMENT)
-  env._max_episode_steps = 2000
+  env._max_episode_steps = 1000  # NOTE does it even work?
   print("Agent %d made environment" % id)
   # env.seed(0)
   num_actions = env.action_space.n
@@ -148,17 +150,15 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
   combined_gradients = \
       [tf.zeros_like(tw) for tw in agent.combined_model.trainable_weights]
 
-  prev_moving_avg_score = 0
-
   while global_T.value < args.global_T_max:
     if exploring_counter > 0:
       # Set epsilon for exploration period
       current_eps = max(
-          min(explore_eps, 10 / (abs(moving_avg_score - prev_moving_avg_score) + 1)),
-          0.1)
+          min(explore_eps, 10 / (abs(delta) + 1)),
+          0.1,
+          eps)
       exploring_counter -= 1
-      if id == 0:
-        print("\t\t---- AGENT 0 EXPLORING WITH EPS=%f----" % eps)
+      print("\t\t---- AGENT %d EXPLORING WITH EPS=%f----" % (id, current_eps))
     else:
       # Set espilon to the normal decay-epsilon
       current_eps = eps
@@ -167,11 +167,12 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
 
     if explore_check_counter == explore_check_freq:
       if id == 0:
-        print("\t\t---- AGENT 0 CHECKING IF IT SHOULD EXPLORE ----")
+        print("\t\t---- AGENT 0 CHECKING IF IT SHOULD EXPLORE, delta=%f ----" % delta)
       explore_check_counter = 0
       moving_avg_score = np.mean(moving_avg_buffer)
+      delta = moving_avg_score - prev_moving_avg_score - 10
 
-      if moving_avg_score - prev_moving_avg_score <= 0:
+      if delta <= 0:
         exploring_counter = explore_time
 
       prev_moving_avg_score = moving_avg_score
