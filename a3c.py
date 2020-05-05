@@ -175,7 +175,7 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
       if id == 0:
         print("\t\t---- AGENT 0 CHECKING IF IT SHOULD EXPLORE, delta=%f ----" % delta)
       if delta <= 0:
-        print("\t\þ ---- AGENT %d STARTS EXPLORING ----" % id)
+        print("\t\t---- AGENT %d STARTS EXPLORING ----" % id)
         exploring_counter = explore_time
 
       prev_moving_avg_score = moving_avg_score
