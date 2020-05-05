@@ -113,7 +113,7 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
 
   epsilon_min   = 0.01
   epsilon_decay = 0.99
-  eps           = 1.0
+  eps           = 0.5
 
   gamma = 0.99
 
@@ -122,7 +122,7 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
   best_episode_score = 0
 
   env = gym.make(ENVIRONMENT)
-  env._max_episode_steps = 400
+  env._max_episode_steps = 500
   print("Agent %d made environment" % id)
   # env.seed(0)
   num_actions = env.action_space.n
