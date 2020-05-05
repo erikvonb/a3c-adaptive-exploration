@@ -116,10 +116,10 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
 
   gamma = 0.99
 
-  explore_time = 10
+  explore_time = 5
   exploring_counter = 10
-  explore_check_freq = 35
-  # explore_check_freq = 20
+  # explore_check_freq = 35
+  explore_check_freq = 20
   explore_check_counter = 0
   explore_eps = 1.0
   
@@ -153,10 +153,11 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
   while global_T.value < args.global_T_max:
     if exploring_counter > 0:
       # Set epsilon for exploration period
-      current_eps = max(
-          min(explore_eps, 10 / (abs(delta) + 1)),
-          0.1,
-          eps)
+      # current_eps = max(
+          # min(explore_eps, 10 / (abs(delta) + 1)),
+          # 0.1,
+          # eps)
+      current_eps = max(explore_eps, eps + 0.1)
       exploring_counter -= 1
       print("\t\t---- AGENT %d EXPLORING WITH EPS=%f----" % (id, current_eps))
     else:
@@ -165,18 +166,19 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
       if eps > epsilon_min:
         eps = eps * epsilon_decay
 
+      explore_check_counter += 1
+
     if explore_check_counter == explore_check_freq:
-      if id == 0:
-        print("\t\t---- AGENT 0 CHECKING IF IT SHOULD EXPLORE, delta=%f ----" % delta)
       explore_check_counter = 0
       moving_avg_score = np.mean(moving_avg_buffer)
-      delta = moving_avg_score - prev_moving_avg_score - 10
-
+      delta = moving_avg_score - prev_moving_avg_score - 20
+      if id == 0:
+        print("\t\t---- AGENT 0 CHECKING IF IT SHOULD EXPLORE, delta=%f ----" % delta)
       if delta <= 0:
+        print("\t\þ ---- AGENT %d STARTS EXPLORING ----" % id)
         exploring_counter = explore_time
 
       prev_moving_avg_score = moving_avg_score
-    explore_check_counter += 1
 
     with global_T.get_lock():
       global_T.value += 1
