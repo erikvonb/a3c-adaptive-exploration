@@ -112,13 +112,13 @@ class Agent:
 def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, global_T):
 
   epsilon_min   = 0.01
-  epsilon_decay = 0.998
+  epsilon_decay = 0.99
   eps           = 1.0
 
   gamma = 0.99
 
   t_max = args.freq
-  max_episode_length = 2000  # NOTE not used
+  max_episode_length = 1000  # NOTE not used
 
   best_episode_score = 0
 
@@ -143,6 +143,9 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
     with global_T.get_lock():
       global_T.value += 1
       current_episode = global_T.value
+
+    if eps > epsilon_min:
+      eps = eps * epsilon_decay
 
     state = env.reset()
     state = np.reshape(state, (1, num_states))
@@ -172,8 +175,6 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
           action = np.random.randint(num_actions)
         else:
           action = np.argmax(probs.numpy())
-        if eps > epsilon_min:
-          eps = eps * epsilon_decay
 
       next_state, reward, terminated, _ = env.step(action)
       if terminated:
