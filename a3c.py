@@ -118,12 +118,11 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
   gamma = 0.99
 
   t_max = args.freq
-  max_episode_length = 1000  # NOTE not used
 
   best_episode_score = 0
 
   env = gym.make(ENVIRONMENT)
-  env._max_episode_steps = 2000
+  env._max_episode_steps = 400
   print("Agent %d made environment" % id)
   # env.seed(0)
   num_actions = env.action_space.n
