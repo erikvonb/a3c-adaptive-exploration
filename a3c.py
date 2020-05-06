@@ -112,14 +112,14 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
 
   epsilon_min   = 0.01
   epsilon_decay = 0.99
-  eps           = 0.5
+  eps           = 1.0
 
   gamma = 0.99
 
-  explore_time = 5
-  exploring_counter = 10
+  explore_time = 10
+  exploring_counter = 20
   # explore_check_freq = 35
-  explore_check_freq = 20
+  explore_check_freq = 25
   explore_check_counter = 0
   explore_eps = 1.0
   

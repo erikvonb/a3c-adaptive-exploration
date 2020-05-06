@@ -17,7 +17,7 @@ def plot_moving_average(length):
     scores = np.loadtxt(os.path.join(SCORES_DIR, file))
     moving_avgs = moving_averages(scores, length)
 
-    plt.plot(moving_avgs, alpha = 0.2)
+    plt.plot(moving_avgs, alpha = 0.2, linestyle = 'dashed')
 
     if xs is None:
       xs = moving_avgs
@@ -27,6 +27,7 @@ def plot_moving_average(length):
   xs = xs / len(files)
 
   plt.plot(xs)
+  plt.grid()
   plt.xlabel("Episode")
   plt.ylabel("Moving average episode score (length %d)" % length)
   # plt.ylim(0, 150)
@@ -38,12 +39,12 @@ def plot_moving_average(length):
 
   plt.savefig(fpath)
   print("Saved figure as", fpath)
-  fname = dt.datetime.today().strftime("%Y-%m-%d-%X") \
-      + ":moving_averages_%d_zoom" % length \
-      + ".pdf"
-  fpath = os.path.join(SAVE_DIR, fname)
-  plt.ylim(0, 200)
-  plt.savefig(fpath)
+  # fname = dt.datetime.today().strftime("%Y-%m-%d-%X") \
+      # + ":moving_averages_%d_zoom" % length \
+      # + ".pdf"
+  # fpath = os.path.join(SAVE_DIR, fname)
+  # plt.ylim(0, 200)
+  # plt.savefig(fpath)
   
     
     
