@@ -4,34 +4,43 @@ import os
 import datetime as dt
 
 
-SCORES_DIR = os.path.join('.', 'plot_scores')
+SCORES_DIR_1 = os.path.join('.', 'plot_scores', 'set1')
+SCORES_DIR_2 = os.path.join('.', 'plot_scores', 'set2')
 SAVE_DIR   = os.path.join('.', 'plots')
 
 def plot_moving_average(length):
-  files = os.listdir(SCORES_DIR)
-  xs = None
+  n_files = len(os.listdir(SCORES_DIR_1))
+  xs_1 = None
+  xs_2 = None
   
   plt.figure(figsize = (8, 4))
 
-  for file in os.listdir(SCORES_DIR):
-    scores = np.loadtxt(os.path.join(SCORES_DIR, file))
+  for file in os.listdir(SCORES_DIR_1):
+    scores = np.loadtxt(os.path.join(SCORES_DIR_1, file))
     moving_avgs = moving_averages(scores, length)
 
-    plt.plot(moving_avgs, alpha = 0.6, linestyle = 'dotted')
-    # plt.plot(moving_avgs, alpha = 0.2)
-
-    if xs is None:
-      xs = moving_avgs
+    if xs_1 is None:
+      xs_1 = moving_avgs
     else:
-      xs = xs + moving_avgs
+      xs_1 = xs_1 + moving_avgs
+  xs_1 = xs_1 / n_files
 
-  xs = xs / len(files)
+  for file in os.listdir(SCORES_DIR_2):
+    scores = np.loadtxt(os.path.join(SCORES_DIR_2, file))
+    moving_avgs = moving_averages(scores, length)
 
-  plt.plot(xs)
+    if xs_2 is None:
+      xs_2 = moving_avgs
+    else:
+      xs_2 = xs_2 + moving_avgs
+  xs_2 = xs_2 / n_files
+
+  plt.plot(xs_1, label = "Standard decay")
+  plt.plot(xs_2, label = "Adaptive", linestyle = 'dashed')
+  plt.legend()
   plt.grid()
   plt.xlabel("Episode")
   plt.ylabel("Moving average episode score (length %d)" % length)
-  # plt.ylim(0, 150)
 
   fname = dt.datetime.today().strftime("%Y-%m-%d-%X") \
       + ":moving_averages_%d" % length \
@@ -40,13 +49,6 @@ def plot_moving_average(length):
 
   plt.savefig(fpath)
   print("Saved figure as", fpath)
-  # fname = dt.datetime.today().strftime("%Y-%m-%d-%X") \
-      # + ":moving_averages_%d_zoom" % length \
-      # + ".pdf"
-  # fpath = os.path.join(SAVE_DIR, fname)
-  # plt.ylim(0, 200)
-  # plt.savefig(fpath)
-  
     
     
 def moving_averages(xs, length):
