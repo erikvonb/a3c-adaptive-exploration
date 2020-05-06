@@ -116,12 +116,12 @@ def worker_main(id, gradient_queue, scores_queue, exit_queue, sync_connection, g
 
   gamma = 0.99
 
-  explore_time = 10
-  exploring_counter = 20
+  explore_time = 5
+  exploring_counter = 10
   # explore_check_freq = 35
   explore_check_freq = 25
-  explore_check_counter = 0
-  explore_eps = 1.0
+  explore_check_counter = id * 7
+  explore_eps = 0.5
   
   moving_avg_buffer = np.zeros(5)
   moving_avg_ptr    = 0
